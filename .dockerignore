@@ -1,0 +1,12 @@
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!Dockerfile
+!settings.toml
+!src/
+!src/**
+**/__pycache__
+**/*.pyc
+**/*.egg-info

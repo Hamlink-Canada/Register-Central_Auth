@@ -1,0 +1,179 @@
+name: checks
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  dependency:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    outputs:
+      revision: ${{ steps.resolved.outputs.revision }}
+      common_revision: ${{ steps.resolved.outputs.common_revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: service
+          persist-credentials: false
+      - id: dependency
+        run: echo "ref=$(python service/scripts/dependency.py rpt-protobuf)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/rpt_protobuf
+          ref: ${{ steps.dependency.outputs.ref }}
+          path: rpt_protobuf
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/pyCommon
+          ref: main
+          path: pyCommon
+          persist-credentials: false
+      - id: resolved
+        run: |
+          revision=$(git -C rpt_protobuf rev-parse HEAD)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "Shared protobuf main resolved to $revision" >> "$GITHUB_STEP_SUMMARY"
+          common_revision=$(git -C pyCommon rev-parse HEAD)
+          echo "common_revision=$common_revision" >> "$GITHUB_OUTPUT"
+          echo "Shared models main resolved to $common_revision" >> "$GITHUB_STEP_SUMMARY"
+  test:
+    needs: dependency
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.13', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: service
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/pyCommon
+          ref: ${{ needs.dependency.outputs.common_revision }}
+          path: pyCommon
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/rpt_protobuf
+          ref: ${{ needs.dependency.outputs.revision }}
+          path: rpt_protobuf
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.21'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/Register-pyHTTP
+          ref: main
+          path: Register-pyHTTP
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/Register-pyIAX
+          ref: main
+          path: Register-pyIAX
+          persist-credentials: false
+      - run: uv sync --locked --group integration --python ${{ matrix.python }}
+        working-directory: service
+      - run: make check build
+        working-directory: service
+      - run: uv run --locked --group integration pytest
+        working-directory: service
+        env:
+          RPT_TEST_POSTGRES: '1'
+
+  image:
+    needs: [dependency, test]
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: service
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/rpt_protobuf
+          ref: ${{ needs.dependency.outputs.revision }}
+          path: rpt_protobuf
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/pyCommon
+          ref: ${{ needs.dependency.outputs.common_revision }}
+          path: pyCommon
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Smoke-test runtime imports on both architectures
+        run: |
+          for platform in linux/amd64 linux/arm64; do
+            docker buildx build --load --platform "$platform" --build-context rpt_protobuf=./rpt_protobuf --build-context pycommon=./pyCommon -t rpt-runtime:check ./service
+            docker run --rm --network none --platform "$platform" --entrypoint python rpt-runtime:check -c "import rpt_central_auth.cli; import rpt_common.models.credentials; from rpt_protobuf.dns_update_pb2 import dns_update; assert dns_update().node.id == 0"
+          done
+      - name: Build native image for health and shutdown acceptance
+        run: docker buildx build --load --platform linux/amd64 --build-context rpt_protobuf=./rpt_protobuf --build-context pycommon=./pyCommon -t rpt-central-auth:check ./service
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.21'
+      - run: uv sync --locked --python 3.13
+        working-directory: service
+      - run: uv run --locked pytest tests/test_container.py
+        working-directory: service
+        env:
+          RPT_TEST_IMAGE: rpt-central-auth:check
+      - id: tags
+        env:
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          image=ghcr.io/hamlink-canada/rpt-central-auth
+          echo 'tags<<EOF' >> "$GITHUB_OUTPUT"
+          echo "$image:sha-$SHA" >> "$GITHUB_OUTPUT"
+          if [ "$RELEASE" = true ]; then
+            if ! printf '%s' "$REF" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+              echo 'Invalid release version' >&2
+              exit 1
+            fi
+            echo "$image:${REF#v}" >> "$GITHUB_OUTPUT"
+            case "$REF" in *-*) ;; *) echo "$image:latest" >> "$GITHUB_OUTPUT" ;; esac
+          fi
+          echo EOF >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./service
+          build-contexts: |
+            rpt_protobuf=./rpt_protobuf
+            pycommon=./pyCommon
+          platforms: linux/amd64,linux/arm64
+          push: ${{ startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: VCS_REF=${{ github.sha }}
+          provenance: true
