@@ -1,0 +1,3 @@
+# Keep credential lookup separate from registration verification
+
+The central service supplies generated registration passwords to authorized registrars, while HTTP password verification and IAX challenge-response remain in their respective registrar projects. Shared database models belong in `pyCommon`, and the credential RPC contract belongs in `rpt_protobuf`; this keeps protocol logic and shared schema ownership separate at the cost of exposing retrievable passwords to authorized service processes. These boundaries carry forward the previously agreed registration design and the user's central-service requirements; backend selection, database schema, and service authorization details remain open.
