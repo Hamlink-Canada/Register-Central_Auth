@@ -10,9 +10,8 @@ Choose one authoritative backend: a validated CSV snapshot, the shared SQLAlchem
 model from `pyCommon`, or an installed custom Python backend module. There is no
 fallback between backends and no server-side credential-result cache.
 
-The initial image is prepared for `ghcr.io/hamlink-canada/rpt-central-auth:0.1.0`;
-it has not been published by this implementation. Build locally until a release
-is available. Detailed guidance belongs in the
+The next planned image release is `ghcr.io/hamlink-canada/rpt-central-auth:1.0.1`.
+Build locally until that release is available. Detailed guidance belongs in the
 [operator documentation](https://hamlink-canada.github.io/apt-rpt-docs/projects/central-auth/).
 
 ## Requirements
@@ -198,7 +197,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: auth
-          image: ghcr.io/hamlink-canada/rpt-central-auth:0.1.0
+          image: ghcr.io/hamlink-canada/rpt-central-auth:1.0.1
           env:
             - {name: RPT_CONFIG_DIR, value: /config}
           ports:
@@ -269,7 +268,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: migrate
-          image: ghcr.io/hamlink-canada/rpt-central-auth:0.1.0
+          image: ghcr.io/hamlink-canada/rpt-central-auth:1.0.1
           command: [rpt-common-migrate, upgrade, --url-file, /migration/url]
           volumeMounts:
             - {name: migration, mountPath: /migration, readOnly: true}
@@ -366,7 +365,7 @@ See [the design record](docs/design.md) and ADRs for agreed boundaries. The prot
 contract remains in `rpt_protobuf`; shared models and migrations remain in `pyCommon`.
 
 Images are published only after the release workflow passes its tests and container
-checks. Publishing a GitHub prerelease (for example, `v0.2.0-rc.1`) publishes its
+checks. Publishing a GitHub prerelease (for example, `v1.0.1-rc.1`) publishes its
 version and commit-SHA image tags without updating `latest`. Pushing a tag alone
 does not publish an image. Registry authentication uses the built-in `GITHUB_TOKEN`.
 
