@@ -130,7 +130,7 @@ jobs:
             docker run --rm --network none --platform "$platform" --entrypoint python rpt-runtime:check -c "import rpt_central_auth.cli; import rpt_common.models.credentials; from rpt_protobuf.dns_update_pb2 import dns_update; assert dns_update().node.id == 0"
           done
       - name: Build native image for health and shutdown acceptance
-        run: docker buildx build --load --platform linux/amd64 --build-context rpt_protobuf=./rpt_protobuf --build-context pycommon=./pyCommon -t rpt-central-auth:check ./service
+        run: docker buildx build --load --platform linux/amd64 --build-context rpt_protobuf=./rpt_protobuf --build-context pycommon=./pyCommon -t register-central-auth:check ./service
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.13'
@@ -142,7 +142,7 @@ jobs:
       - run: uv run --locked pytest tests/test_container.py
         working-directory: service
         env:
-          RPT_TEST_IMAGE: rpt-central-auth:check
+          RPT_TEST_IMAGE: register-central-auth:check
       - id: tags
         env:
           REF: ${{ github.ref_name }}
@@ -150,7 +150,7 @@ jobs:
           RELEASE: ${{ github.event_name == 'release' }}
           PRERELEASE: ${{ github.event.release.prerelease || false }}
         run: |
-          image=ghcr.io/hamlink-canada/rpt-central-auth
+          image=ghcr.io/hamlink-canada/register-central-auth
           echo 'tags<<EOF' >> "$GITHUB_OUTPUT"
           echo "$image:sha-$SHA" >> "$GITHUB_OUTPUT"
           if [ "$RELEASE" = true ]; then
