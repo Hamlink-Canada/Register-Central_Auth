@@ -151,22 +151,23 @@ jobs:
           PRERELEASE: ${{ github.event.release.prerelease || false }}
         run: |
           image=ghcr.io/hamlink-canada/register-central-auth
-          tags="$image:sha-$SHA"
           if [ "$RELEASE" = true ]; then
             if ! printf '%s' "$REF" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
               echo 'Invalid release version' >&2
               exit 1
             fi
-            tags="$tags
-$image:${REF#v}"
-            if [ "$PRERELEASE" = false ]; then
-              case "$REF" in *-*) ;; *) tags="$tags
-$image:latest" ;; esac
-            fi
           fi
-          echo 'tags<<EOF' >> "$GITHUB_OUTPUT"
-          printf '%s\n' "$tags" >> "$GITHUB_OUTPUT"
-          echo EOF >> "$GITHUB_OUTPUT"
+          {
+            echo 'tags<<EOF'
+            echo "$image:sha-$SHA"
+            if [ "$RELEASE" = true ]; then
+              echo "$image:${REF#v}"
+              if [ "$PRERELEASE" = false ]; then
+                case "$REF" in *-*) ;; *) echo "$image:latest" ;; esac
+              fi
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         if: github.event_name == 'release'
         with:
