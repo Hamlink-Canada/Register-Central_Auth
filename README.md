@@ -358,12 +358,17 @@ Standard dependency declarations follow both libraries' Git `main` branches. uv 
 editable sibling overrides locally. CI resolves both branches once per run and
 shares those exact revisions between tests and image jobs. Merge the initial
 `pyCommon` implementation before running this workflow against its `main` branch.
-Tests target Python 3.13/3.14; image validation targets AMD64/ARM64. Version-tag pushes
-publish version and service-commit tags; stable tag names also update `latest`.
+Tests target Python 3.13/3.14; image validation targets AMD64/ARM64. Published GitHub releases with `vMAJOR.MINOR.PATCH` tags
+publish version and service-commit tags; stable releases also update `latest`.
 There is no PyPI publication. Use image digests for exact deployment artifacts.
 
 See [the design record](docs/design.md) and ADRs for agreed boundaries. The protobuf
 contract remains in `rpt_protobuf`; shared models and migrations remain in `pyCommon`.
+
+Images are published only after the release workflow passes its tests and container
+checks. Publishing a GitHub prerelease (for example, `v0.2.0-rc.1`) publishes its
+version and commit-SHA image tags without updating `latest`. Pushing a tag alone
+does not publish an image. Registry authentication uses the built-in `GITHUB_TOKEN`.
 
 ## License
 
