@@ -2,8 +2,9 @@ name: checks
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
+  release:
+    types: [published]
 permissions:
   contents: read
 concurrency:
@@ -146,7 +147,8 @@ jobs:
         env:
           REF: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
-          RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          RELEASE: ${{ github.event_name == 'release' }}
+          PRERELEASE: ${{ github.event.release.prerelease || false }}
         run: |
           image=ghcr.io/hamlink-canada/rpt-central-auth
           echo 'tags<<EOF' >> "$GITHUB_OUTPUT"
@@ -157,11 +159,13 @@ jobs:
               exit 1
             fi
             echo "$image:${REF#v}" >> "$GITHUB_OUTPUT"
-            case "$REF" in *-*) ;; *) echo "$image:latest" >> "$GITHUB_OUTPUT" ;; esac
+            if [ "$PRERELEASE" = false ]; then
+              case "$REF" in *-*) ;; *) echo "$image:latest" >> "$GITHUB_OUTPUT" ;; esac
+            fi
           fi
           echo EOF >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+        if: github.event_name == 'release'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -173,7 +177,7 @@ jobs:
             rpt_protobuf=./rpt_protobuf
             pycommon=./pyCommon
           platforms: linux/amd64,linux/arm64
-          push: ${{ startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' }}
+          push: ${{ github.event_name == 'release' }}
           tags: ${{ steps.tags.outputs.tags }}
           build-args: VCS_REF=${{ github.sha }}
           provenance: true
