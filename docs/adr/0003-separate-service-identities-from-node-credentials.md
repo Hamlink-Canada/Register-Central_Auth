@@ -1,3 +1,0 @@
-# Authorize registrars for network-wide credential lookup
-
-Registrar service identities are separate from the node credentials they retrieve, and every authenticated registrar has access to all nodes within its deployment's network. This intentionally avoids per-node authorization rules while requiring verified service authentication before backend access; the trade-off is that compromise of one registrar can expose the network's registration passwords. Identity configuration initially uses operator-managed token digests and/or verified client-certificate SAN identities rather than the shared node-credential database.

@@ -2,16 +2,16 @@
 
 Central Auth supplies generated node passwords to trusted HTTP and IAX registrars
 over gRPC. Registrars still verify passwords and IAX challenges themselves. This
-service performs lookup only; provisioning and administration belong to a separate
-project. Every authenticated registrar can retrieve any node's credential within
-this deployment's network.
+service performs lookup only; operators provision and administer credentials through
+their chosen data-management process. Every authenticated registrar can retrieve any
+node's credential within this deployment's network.
 
 Choose one authoritative backend: a validated CSV snapshot, the shared SQLAlchemy
 model from `pyCommon`, or an installed custom Python backend module. There is no
 fallback between backends and no server-side credential-result cache.
 
-The next planned image release is `ghcr.io/hamlink-canada/rpt-central-auth:1.0.1`.
-Build locally until that release is available. Detailed guidance belongs in the
+For setup and architecture, see the [documentation index](docs/README.md),
+[current decisions](docs/decisions.md), and the cross-project
 [operator documentation](https://hamlink-canada.github.io/apt-rpt-docs/projects/central-auth/).
 
 ## Requirements
@@ -355,13 +355,12 @@ docker buildx build --load \
 
 Standard dependency declarations follow both libraries' Git `main` branches. uv uses
 editable sibling overrides locally. CI resolves both branches once per run and
-shares those exact revisions between tests and image jobs. Merge the initial
-`pyCommon` implementation before running this workflow against its `main` branch.
+shares those exact revisions between tests and image jobs.
 Tests target Python 3.13/3.14; image validation targets AMD64/ARM64. Published GitHub releases with `vMAJOR.MINOR.PATCH` tags
 publish version and service-commit tags; stable releases also update `latest`.
 There is no PyPI publication. Use image digests for exact deployment artifacts.
 
-See [the design record](docs/design.md) and ADRs for agreed boundaries. The protobuf
+See [current decisions](docs/decisions.md) for the service boundaries and rationale. The protobuf
 contract remains in `rpt_protobuf`; shared models and migrations remain in `pyCommon`.
 
 Images are published only after the release workflow passes its tests and container

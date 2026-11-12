@@ -1,3 +1,0 @@
-# Use versioned backend modules with an explicit lifecycle
-
-CSV, SQLAlchemy, and custom backends implement the same versioned module interface for initialization, lookup, availability checks, and cleanup, with private state and finite timeout obligations. This lets operators install backend-specific functions and dependencies without coupling the service to a database implementation; arbitrary extra functions are not exposed over gRPC. Trusted synchronous modules share a process and must cooperate with timeout/concurrency requirements, avoiding process isolation complexity while containing outstanding work through bounded capacity.
