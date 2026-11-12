@@ -57,7 +57,9 @@ def test_probe_uses_insecure_channel_and_closes(monkeypatch, settings):
     channel = Channel()
     monkeypatch.setattr("rpt_central_auth.probe.grpc.insecure_channel", lambda target: channel)
     monkeypatch.setattr("rpt_central_auth.probe.health_pb2_grpc.HealthStub", Stub)
-    config = settings(environment="development", tls={"insecure": True}, probe={"token": "probe-token"})
+    config = settings(
+        environment="development", tls={"insecure": True}, probe={"token": "probe-token"}
+    )
 
     assert check(config, "readiness")
     assert calls[0] == ("stub", channel)
