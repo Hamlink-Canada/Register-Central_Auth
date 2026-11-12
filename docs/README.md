@@ -25,8 +25,6 @@ The main moving pieces are:
 - **TLS**: server identity is verified by clients. Database connections verify
   their server certificate by default.
 
-Start with the repository [README](../README.md) for a local run and configuration
-summary. See [decisions](decisions.md) for the current architectural choices and
-[glossary](glossary.md) for domain terms.
-
-For current architectural choices and their rationale, see [decisions](decisions.md).
+Use the repository [README](../README.md) to run the service and configure a
+deployment. [Decisions](decisions.md) records the architecture; the [glossary](glossary.md)
+defines the terms used here.
