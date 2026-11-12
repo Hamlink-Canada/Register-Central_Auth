@@ -197,7 +197,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: auth
-          image: ghcr.io/hamlink-canada/rpt-central-auth:1.0.1
+          image: ghcr.io/hamlink-canada/register-central-auth:1.0.1
           env:
             - {name: RPT_CONFIG_DIR, value: /config}
           ports:
@@ -268,7 +268,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: migrate
-          image: ghcr.io/hamlink-canada/rpt-central-auth:1.0.1
+          image: ghcr.io/hamlink-canada/register-central-auth:1.0.1
           command: [rpt-common-migrate, upgrade, --url-file, /migration/url]
           volumeMounts:
             - {name: migration, mountPath: /migration, readOnly: true}
