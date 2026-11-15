@@ -49,9 +49,7 @@ class Credentials(CredentialServiceServicer):
                     span.set_attribute("repeater.node_id", str(request.node_id))
                     peer = context.peer()
                     address = (
-                        peer.rsplit(":", 1)[0]
-                        if peer.startswith(("ipv4:", "ipv6:"))
-                        else peer
+                        peer.rsplit(":", 1)[0] if peer.startswith(("ipv4:", "ipv6:")) else peer
                     )
                     span.set_attribute("client.address", address)
             if identity.role != "registrar":
