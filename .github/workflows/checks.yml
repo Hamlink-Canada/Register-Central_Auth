@@ -127,7 +127,7 @@ jobs:
         run: |
           for platform in linux/amd64 linux/arm64; do
             docker buildx build --load --platform "$platform" --build-context rpt_protobuf=./rpt_protobuf --build-context pycommon=./pyCommon -t rpt-runtime:check ./service
-            docker run --rm --network none --platform "$platform" --entrypoint python rpt-runtime:check -c "import rpt_central_auth.cli; import rpt_common.models.credentials; from rpt_protobuf.dns_update_pb2 import dns_update; assert dns_update().node.id == 0"
+            docker run --rm --network none --platform "$platform" --entrypoint python rpt-runtime:check -c "from importlib.metadata import version; [version(name) for name in ('opentelemetry-api', 'opentelemetry-sdk', 'opentelemetry-exporter-otlp-proto-http', 'opentelemetry-exporter-otlp-proto-grpc', 'opentelemetry-distro', 'opentelemetry-instrumentation-grpc', 'opentelemetry-instrumentation-system-metrics', 'opentelemetry-instrumentation-logging')]; import rpt_central_auth.cli; import rpt_common.models.credentials; from rpt_protobuf.dns_update_pb2 import dns_update; assert dns_update().node.id == 0"
           done
       - name: Build native image for health and shutdown acceptance
         run: docker buildx build --load --platform linux/amd64 --build-context rpt_protobuf=./rpt_protobuf --build-context pycommon=./pyCommon -t register-central-auth:check ./service
