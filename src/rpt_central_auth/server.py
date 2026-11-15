@@ -21,6 +21,11 @@ from rpt_central_auth.limits import Limits
 from rpt_central_auth.metrics import Metrics
 from rpt_central_auth.module import Backend
 
+try:
+    from opentelemetry import trace
+except ImportError:  # Telemetry is an optional extra.
+    trace = None
+
 SERVICES = {
     "startup": "rpt.central_auth.startup",
     "liveness": "rpt.central_auth.liveness",
@@ -37,6 +42,18 @@ class Credentials(CredentialServiceServicer):
         started, outcome = time.monotonic(), "INTERNAL"
         try:
             identity = await self.app.authorize(context, "lookup")
+            if trace is not None:
+                span = trace.get_current_span()
+                if span.is_recording():
+                    span.set_attribute("auth.username", identity.name)
+                    span.set_attribute("repeater.node_id", str(request.node_id))
+                    peer = context.peer()
+                    address = (
+                        peer.rsplit(":", 1)[0]
+                        if peer.startswith(("ipv4:", "ipv6:"))
+                        else peer
+                    )
+                    span.set_attribute("client.address", address)
             if identity.role != "registrar":
                 await context.abort(grpc.StatusCode.PERMISSION_DENIED, "credential lookup denied")
             if not valid_node_id(request.node_id):
@@ -155,8 +172,18 @@ class Application:
         try:
             identity = self.auth.authenticate(context.invocation_metadata(), context.auth_context())
         except AuthenticationFailed:
+            if trace is not None:
+                span = trace.get_current_span()
+                if span.is_recording():
+                    span.set_attribute("auth.failure.category", "service_authentication_failed")
+                    span.set_attribute("client.address", source)
             self.limits.auth_failed(source)
             await context.abort(grpc.StatusCode.UNAUTHENTICATED, "service authentication required")
+        if trace is not None:
+            span = trace.get_current_span()
+            if span.is_recording():
+                span.set_attribute("auth.username", identity.name)
+                span.set_attribute("client.address", source)
         if method == "health" and not self.limits.health(identity.name):
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, "health budget exceeded")
         return identity
