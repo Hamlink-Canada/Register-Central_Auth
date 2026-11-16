@@ -21,9 +21,11 @@ jobs:
           branch_slug=$(printf '%s' "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[.-]+//; s/[.-]+$//' | cut -c1-60)
           branch_slug=${branch_slug:-branch}
           branch_hash=$(printf '%s' "$BRANCH_NAME" | sha256sum | cut -c1-12)
-          branch_tag="dev-$branch_slug-$branch_hash"
+          branch_tag="dev-$branch_slug"
+          legacy_branch_tag="dev-$branch_slug-$branch_hash"
           export BRANCH_TAG="$branch_tag"
-          version_ids=$(gh api --paginate --jq '.[] | select(any(.metadata.container.tags[]?; . == env.BRANCH_TAG or startswith(env.BRANCH_TAG + "-"))) | .id' "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions?per_page=100")
+          export LEGACY_BRANCH_TAG="$legacy_branch_tag"
+          version_ids=$(gh api --paginate --jq '.[] | select(any(.metadata.container.tags[]?; . == env.BRANCH_TAG or . == env.LEGACY_BRANCH_TAG or startswith(env.LEGACY_BRANCH_TAG + "-"))) | .id' "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions?per_page=100")
           if [ -z "$version_ids" ]; then
             echo "No image versions found for $BRANCH_NAME"
             exit 0
