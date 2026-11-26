@@ -137,6 +137,21 @@ def test_postgres_tls_rejects_unix_socket_urls():
     asyncio.run(scenario())
 
 
+def test_postgres_connection_options_are_url_strings():
+    async def scenario():
+        state = await sqlalchemy.initialize(
+            options={"url": "postgresql://user:secret@db.example/credentials"},
+            timeout=2,
+        )
+        try:
+            assert state.url.query["connect_timeout"] == "1"
+            assert all(isinstance(value, str) for value in state.url.query.values())
+        finally:
+            await sqlalchemy.close(state=state, timeout=1)
+
+    asyncio.run(scenario())
+
+
 def test_cancelled_postgres_operation_closes_connection(monkeypatch):
     class Connection:
         closed = False

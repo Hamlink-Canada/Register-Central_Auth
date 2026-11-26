@@ -68,7 +68,7 @@ async def initialize(*, options, timeout):
         raise ValueError("TLS requires a PostgreSQL network host; Unix sockets are unsupported")
 
     query = dict(url.query)
-    query.update(connect_timeout=max(1, math.ceil(min(timeout, 1))), gssencmode="disable")
+    query.update(connect_timeout=str(max(1, math.ceil(min(timeout, 1)))), gssencmode="disable")
     query["options"] = "-c default_transaction_read_only=on"
     if not tls:
         query["sslmode"] = "disable"
