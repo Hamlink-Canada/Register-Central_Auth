@@ -145,6 +145,7 @@ def test_postgres_tls_rejects_unix_socket_urls():
         for url in (
             "postgresql:///credentials",
             "postgresql:///credentials?host=%2Fvar%2Frun%2Fpostgresql",
+            "postgresql://db.example/credentials?host=%2Ftmp",
         ):
             with pytest.raises(ValueError, match="Unix sockets"):
                 await sqlalchemy.initialize(options={"url": url, "tls": True}, timeout=1)
@@ -167,6 +168,34 @@ def test_postgres_connection_options_are_url_strings():
             )
         finally:
             await sqlalchemy.close(state=state, timeout=1)
+
+    asyncio.run(scenario())
+
+
+def test_postgres_preserves_startup_options_and_enforces_readonly():
+    async def scenario():
+        state = await sqlalchemy.initialize(
+            options={
+                "url": "postgresql://user:secret@db.example/credentials?options=-c%20search_path%3Dcredential_schema"
+            },
+            timeout=2,
+        )
+        assert sqlalchemy._connection_kwargs(state.url)["options"] == (
+            "-c search_path=credential_schema -c default_transaction_read_only=on"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_postgres_repeated_query_parameters_are_rejected():
+    async def scenario():
+        with pytest.raises(ValueError, match="repeated PostgreSQL query parameters"):
+            await sqlalchemy.initialize(
+                options={
+                    "url": "postgresql://user:secret@db.example/credentials?host=db1&host=db2"
+                },
+                timeout=2,
+            )
 
     asyncio.run(scenario())
 
@@ -194,6 +223,57 @@ def test_cancelled_postgres_operation_closes_connection(monkeypatch):
             async with asyncio.timeout(0.02):
                 async with sqlalchemy.connection(state, 1) as conn:
                     await conn.execute("SELECT slow")
+        assert connection.closed
+
+    asyncio.run(scenario())
+
+
+def test_postgres_deadline_aborts_transport_before_driver_cancellation_finishes(monkeypatch):
+    class Transport:
+        closed = False
+
+        def finish(self):
+            self.closed = True
+
+    class Connection:
+        def __init__(self):
+            self.pgconn = Transport()
+
+        @property
+        def closed(self):
+            return self.pgconn.closed
+
+        async def execute(self, statement, params=None):
+            if statement == "SELECT slow":
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    while not self.pgconn.closed:
+                        await asyncio.sleep(0)
+                    raise
+
+        async def close(self):
+            self.pgconn.finish()
+
+    async def scenario():
+        connection = Connection()
+
+        async def connect(*args, **kwargs):
+            return connection
+
+        monkeypatch.setattr(sqlalchemy.psycopg.AsyncConnection, "connect", connect)
+
+        async def operation():
+            async with sqlalchemy.connection(
+                sqlalchemy.State(sqlalchemy.make_url("postgresql://db.example/credentials"), False),
+                0.02,
+            ) as conn:
+                await conn.execute("SELECT slow")
+
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(operation(), 0.02)
+        assert asyncio.get_running_loop().time() - started < 0.2
         assert connection.closed
 
     asyncio.run(scenario())

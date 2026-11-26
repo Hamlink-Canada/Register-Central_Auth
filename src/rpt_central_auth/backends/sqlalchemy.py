@@ -69,22 +69,29 @@ async def initialize(*, options, timeout):
     # This backend connects with psycopg directly, not through SQLAlchemy's
     # dialect adapter, so strip any SQLAlchemy driver suffix from the DSN.
     url = url.set(drivername="postgresql")
+    if any(isinstance(value, tuple) for value in url.query.values()):
+        raise ValueError("repeated PostgreSQL query parameters are unsupported")
 
     tls, verify = options.get("tls", True), options.get("verify_tls", True)
     if type(tls) is not bool or type(verify) is not bool:
         raise ValueError("database TLS options must be booleans")
     if not tls and options.get("development") is not True:
         raise ValueError("unencrypted database connections require development")
-    configured_host = url.host or url.query.get("host")
-    has_network_host = bool(
-        (configured_host and not str(configured_host).startswith("/")) or url.query.get("hostaddr")
-    )
+    configured_host = url.query.get("host", url.host)
+    configured_hostaddr = url.query.get("hostaddr")
+    endpoints = (configured_host, configured_hostaddr)
+    has_network_host = any(host and not str(host).startswith("/") for host in endpoints)
+    has_socket_host = any(host and str(host).startswith("/") for host in endpoints)
+    if tls and has_socket_host:
+        raise ValueError("TLS requires a PostgreSQL network host; Unix sockets are unsupported")
     if tls and not has_network_host:
         raise ValueError("TLS requires a PostgreSQL network host; Unix sockets are unsupported")
 
     query = dict(url.query)
     query.update(connect_timeout=str(max(1, math.ceil(min(timeout, 1)))), gssencmode="disable")
-    query["options"] = "-c default_transaction_read_only=on"
+    query["options"] = (
+        f"{query.get('options', '').strip()} -c default_transaction_read_only=on"
+    ).strip()
     if not tls:
         query["sslmode"] = "disable"
     elif verify:
@@ -112,6 +119,7 @@ async def connection(state, timeout, *, health=False):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     connection = None
+    abort_handle = None
     slots = state.health_slots if health else state.lookup_slots
     acquired = False
     try:
@@ -135,6 +143,12 @@ async def connection(state, timeout, *, health=False):
                 psycopg.AsyncConnection.connect(**_connection_kwargs(state.url)),
                 remaining,
             )
+
+            def abort_transport():
+                if connection is not None and not connection.closed:
+                    connection.pgconn.finish()
+
+            abort_handle = loop.call_at(deadline, abort_transport)
             remaining = deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError()
@@ -155,6 +169,8 @@ async def connection(state, timeout, *, health=False):
             connection = None
         raise BackendUnavailable() from None
     finally:
+        if abort_handle is not None:
+            abort_handle.cancel()
         try:
             if connection is not None:
                 try:
