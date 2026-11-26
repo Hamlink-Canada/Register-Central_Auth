@@ -78,10 +78,10 @@ def test_registrars_against_central(settings, certificates, tmp_path, backend):
                 "ca": str(certificates["ca"]),
                 "token": TOKENS["a"],
             }
-            # The integration uses a capture publisher, so development mode avoids
-            # requiring real Kafka credentials in the registrar's production config.
+            # The integration uses capture publishers, so development mode avoids
+            # requiring real Kafka credentials in the registrars' production configs.
             http_config = http_settings(environment="development", grpc=rpc)
-            iax_config = iax_settings(grpc=rpc)
+            iax_config = iax_settings(environment="development", grpc=rpc)
             http_provider, iax_provider = HTTPProvider(http_config), IAXProvider(iax_config)
             http_publisher, iax_publisher = Publisher(), Publisher()
             web = create_app(http_config, http_provider, http_publisher).test_client()
