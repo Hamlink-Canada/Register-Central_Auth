@@ -140,10 +140,11 @@ def test_postgres_tls_rejects_unix_socket_urls():
 def test_postgres_connection_options_are_url_strings():
     async def scenario():
         state = await sqlalchemy.initialize(
-            options={"url": "postgresql://user:secret@db.example/credentials"},
+            options={"url": "postgresql+psycopg://user:secret@db.example/credentials"},
             timeout=2,
         )
         try:
+            assert state.url.drivername == "postgresql"
             assert state.url.query["connect_timeout"] == "1"
             assert all(isinstance(value, str) for value in state.url.query.values())
         finally:

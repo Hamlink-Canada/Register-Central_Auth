@@ -54,6 +54,9 @@ async def initialize(*, options, timeout):
         )
     if url.get_backend_name() != "postgresql":
         raise ValueError("supported database engines are PostgreSQL and SQLite")
+    # This backend connects with psycopg directly, not through SQLAlchemy's
+    # dialect adapter, so strip any SQLAlchemy driver suffix from the DSN.
+    url = url.set(drivername="postgresql")
 
     tls, verify = options.get("tls", True), options.get("verify_tls", True)
     if type(tls) is not bool or type(verify) is not bool:
