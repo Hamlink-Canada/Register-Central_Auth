@@ -96,11 +96,12 @@ class Health(health.aio.HealthServicer):
         self.app = app
         self.watchers = 0
 
-    async def validate(self, request, context):
+    async def validate(self, request, context, *, allow_unknown=False):
         await self.app.authorize(context, "health")
-        if request.service not in KNOWN_SERVICES:
+        if not allow_unknown and request.service not in KNOWN_SERVICES:
             await context.abort(grpc.StatusCode.NOT_FOUND, "unknown health service")
-        await self.app.publish_health()
+        if request.service in KNOWN_SERVICES:
+            await self.app.publish_health()
 
     async def Check(self, request, context):
         outcome = "OK"
@@ -117,7 +118,7 @@ class Health(health.aio.HealthServicer):
             self.app.metrics.requests.labels("health", outcome).inc()
 
     async def Watch(self, request, context):
-        await self.validate(request, context)
+        await self.validate(request, context, allow_unknown=True)
         if self.watchers >= 8:
             await context.abort(
                 grpc.StatusCode.RESOURCE_EXHAUSTED, "health watch capacity exceeded"

@@ -166,8 +166,8 @@ def test_health_survives_saturation_and_tracks_outage_recovery(settings, certifi
         try:
             app.backend.state.block = True
             await expect_error(lookup(), grpc.StatusCode.UNAVAILABLE)
-            assert app.backend.lookups.active == 1
-            await expect_error(lookup(), grpc.StatusCode.RESOURCE_EXHAUSTED)
+            assert app.backend.lookups.active == 0
+            await expect_error(lookup(), grpc.StatusCode.UNAVAILABLE)
             assert await status("liveness") == serving
             assert await status("readiness") == serving
             app.backend.state.healthy = False
@@ -253,7 +253,7 @@ def test_registrar_throttling_preserves_other_identity_and_health(settings, cert
     asyncio.run(scenario())
 
 
-def test_request_cancellation_retains_backend_slot(settings, certificates):
+def test_request_cancellation_cancels_backend_work_and_releases_slot(settings, certificates):
     async def scenario():
         app = Application(settings(runtime={"workers": 1}))
         port = await app.start(address="127.0.0.1:0")
@@ -271,13 +271,13 @@ def test_request_cancellation_retains_backend_slot(settings, certificates):
             assert app.backend.state.entered.is_set()
             call.cancel()
             await asyncio.sleep(0.01)
-            assert app.backend.lookups.active == 1
-            await expect_error(
-                stub.GetNodeCredential(
+            assert app.backend.lookups.active == 0
+            app.backend.state.release.set()
+            assert (
+                await stub.GetNodeCredential(
                     CredentialRequest(node_id=1234), metadata=metadata("a"), timeout=1
-                ),
-                grpc.StatusCode.RESOURCE_EXHAUSTED,
-            )
+                )
+            ).password == "generated-test-password"
         finally:
             app.backend.state.release.set()
             await channel.close()
@@ -301,6 +301,15 @@ def test_authenticated_health_watch_tracks_changes(settings, certificates):
             app.backend.state.healthy = False
             await app.check_backend()
             assert (await watch.read()).status == health_pb2.HealthCheckResponse.NOT_SERVING
+            unknown = health_pb2_grpc.HealthStub(channel).Watch(
+                health_pb2.HealthCheckRequest(service="unknown.service"),
+                metadata=metadata("probe"),
+                timeout=2,
+            )
+            try:
+                assert (await unknown.read()).status == health_pb2.HealthCheckResponse.SERVICE_UNKNOWN
+            finally:
+                unknown.cancel()
         finally:
             watch.cancel()
             await channel.close()

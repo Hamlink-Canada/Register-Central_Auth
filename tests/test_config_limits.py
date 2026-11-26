@@ -40,7 +40,9 @@ def test_budgets_are_bounded_and_recover(settings):
     assert not limits.auth_allowed("one")
     assert limits.auth_allowed("two")
     assert not limits.auth_allowed("three")
-    assert len(limits.buckets) == 2
+    assert len(limits.auth_buckets) == 2
+    assert limits.lookup("registrar")
+    assert limits.health("probe")
     now[0] += 1
     assert limits.auth_allowed("one")
 

@@ -1,1 +1,1 @@
-"""Installed API_VERSION=1 backend modules."""
+"""Installed API_VERSION=2 async backend modules."""

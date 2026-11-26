@@ -13,6 +13,7 @@ dependencies = [
   "rpt-common[postgres] @ git+https://github.com/Hamlink-Canada/pyCommon.git@main",
   "dynaconf>=3.3.5,<4", "grpcio-health-checking>=1.85.1,<2",
   "cachetools>=8,<9", "prometheus-client>=0.24,<1",
+  "aiosqlite>=0.21,<1",
 ]
 [project.optional-dependencies]
 otel = [
