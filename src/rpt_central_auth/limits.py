@@ -52,12 +52,12 @@ class Limits:
     def lookup(self, identity):
         return self.bucket(
             self.lookup_buckets,
-            "global",
+            ("global",),
             self.settings.GLOBAL_RATE,
             self.settings.GLOBAL_BURST,
         ) and self.bucket(
             self.lookup_buckets,
-            identity,
+            ("registrar", identity),
             self.settings.REGISTRAR_RATE,
             self.settings.REGISTRAR_BURST,
         )

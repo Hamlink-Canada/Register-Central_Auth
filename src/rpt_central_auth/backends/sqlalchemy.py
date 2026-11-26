@@ -155,14 +155,16 @@ async def connection(state, timeout, *, health=False):
             connection = None
         raise BackendUnavailable() from None
     finally:
-        if connection is not None:
-            try:
-                if state.sqlite:
-                    await connection.set_progress_handler(None, 0)
-            finally:
-                await connection.close()
-        if acquired:
-            slots.release()
+        try:
+            if connection is not None:
+                try:
+                    if state.sqlite:
+                        await connection.set_progress_handler(None, 0)
+                finally:
+                    await connection.close()
+        finally:
+            if acquired:
+                slots.release()
 
 
 async def lookup(node_id, *, state, timeout):

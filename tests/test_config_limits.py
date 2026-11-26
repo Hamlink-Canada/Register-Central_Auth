@@ -47,6 +47,14 @@ def test_budgets_are_bounded_and_recover(settings):
     assert limits.auth_allowed("one")
 
 
+def test_global_registrar_name_uses_separate_lookup_bucket(settings):
+    config = settings(limits={"global_burst": 2, "registrar_burst": 2})
+    limits = Limits(config.LIMITS, timer=lambda: 0)
+    assert limits.lookup("global")
+    assert limits.lookup("global")
+    assert not limits.lookup("global")
+
+
 def test_nested_backend_environment_options(settings, monkeypatch, tmp_path):
     import asyncio
 

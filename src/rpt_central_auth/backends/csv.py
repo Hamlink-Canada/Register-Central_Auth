@@ -1,5 +1,6 @@
 """Validated startup snapshot. Restart to reload file changes."""
 
+import asyncio
 import csv
 import time
 from pathlib import Path
@@ -16,14 +17,15 @@ async def initialize(*, options, timeout):
     maximum = options.get("max_entries", 100000)
     if type(maximum) is not int or maximum <= 0:
         raise ValueError("invalid credential snapshot capacity")
-    if not Path(options["file"]).is_file():
-        raise ValueError("credential CSV must be a regular file")
 
     def read_records():
-        with Path(options["file"]).open(newline="", encoding="utf-8") as stream:
+        path = Path(options["file"])
+        if not path.is_file():
+            raise ValueError("credential CSV must be a regular file")
+        with path.open(newline="", encoding="utf-8") as stream:
             return _read(stream, maximum, deadline)
 
-    records = read_records()
+    records = await asyncio.to_thread(read_records)
     return MappingProxyType(records)
 
 

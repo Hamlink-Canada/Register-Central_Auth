@@ -68,6 +68,21 @@ def test_csv_rejects_bad_data(tmp_path, contents):
         asyncio.run(csv.initialize(options={"file": str(file)}, timeout=1))
 
 
+def test_csv_initialization_offloads_blocking_read(monkeypatch, tmp_path):
+    file = tmp_path / "credentials.csv"
+    file.write_text("node_id,password\n1234,generated-test-password\n")
+    called = []
+
+    async def tracked(function, *args, **kwargs):
+        called.append(function)
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(csv.asyncio, "to_thread", tracked)
+    state = asyncio.run(csv.initialize(options={"file": str(file)}, timeout=1))
+    assert state[1234] == "generated-test-password"
+    assert called
+
+
 def test_sql_readonly_fresh_lookups_and_schema(database):
     url, writer = database
 
@@ -180,6 +195,52 @@ def test_cancelled_postgres_operation_closes_connection(monkeypatch):
                 async with sqlalchemy.connection(state, 1) as conn:
                     await conn.execute("SELECT slow")
         assert connection.closed
+
+    asyncio.run(scenario())
+
+
+def test_sqlite_cleanup_cancellation_releases_connection_permit(monkeypatch):
+    cleanup_started = asyncio.Event()
+
+    class Connection:
+        closed = False
+
+        async def execute(self, *args, **kwargs):
+            pass
+
+        async def set_progress_handler(self, callback, instructions):
+            if callback is None:
+                cleanup_started.set()
+                await asyncio.Event().wait()
+
+        async def close(self):
+            self.closed = True
+
+    async def scenario():
+        connection = Connection()
+
+        async def connect(*args, **kwargs):
+            return connection
+
+        monkeypatch.setattr(sqlalchemy.aiosqlite, "connect", connect)
+        state = sqlalchemy.State(
+            sqlalchemy.make_url("sqlite:///unused.db"),
+            True,
+            "file:unused?mode=ro",
+            lookup_slots=asyncio.Semaphore(1),
+        )
+
+        async def operation():
+            async with sqlalchemy.connection(state, 1):
+                pass
+
+        task = asyncio.create_task(operation())
+        await cleanup_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert connection.closed
+        assert state.lookup_slots._value == 1
 
     asyncio.run(scenario())
 
