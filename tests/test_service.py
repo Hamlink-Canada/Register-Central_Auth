@@ -307,7 +307,9 @@ def test_authenticated_health_watch_tracks_changes(settings, certificates):
                 timeout=2,
             )
             try:
-                assert (await unknown.read()).status == health_pb2.HealthCheckResponse.SERVICE_UNKNOWN
+                assert (
+                    await unknown.read()
+                ).status == health_pb2.HealthCheckResponse.SERVICE_UNKNOWN
             finally:
                 unknown.cancel()
         finally:
