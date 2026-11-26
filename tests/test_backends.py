@@ -228,32 +228,70 @@ def test_cancelled_postgres_operation_closes_connection(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_postgres_deadline_aborts_transport_before_driver_cancellation_finishes(monkeypatch):
+def test_sqlite_busy_timeout_uses_remaining_deadline(monkeypatch):
+    busy_timeouts = []
+
+    class Connection:
+        async def execute(self, statement, params=None):
+            if statement.startswith("PRAGMA busy_timeout="):
+                busy_timeouts.append(int(statement.partition("=")[2]))
+
+        async def set_progress_handler(self, callback, instructions):
+            pass
+
+        async def close(self):
+            pass
+
+    async def scenario():
+        async def connect(*args, **kwargs):
+            return Connection()
+
+        monkeypatch.setattr(sqlalchemy.aiosqlite, "connect", connect)
+        slots = asyncio.Semaphore(0)
+        state = sqlalchemy.State(
+            sqlalchemy.make_url("sqlite:///unused.db"),
+            True,
+            "file:unused?mode=ro",
+            lookup_slots=slots,
+        )
+        task = asyncio.create_task(_hold_connection(state))
+        await asyncio.sleep(0.05)
+        slots.release()
+        await task
+        assert len(busy_timeouts) == 1
+        assert 0 < busy_timeouts[0] < 120
+
+    async def _hold_connection(state):
+        async with sqlalchemy.connection(state, 0.15):
+            pass
+
+    asyncio.run(scenario())
+
+
+def test_postgres_deadline_cancels_owner_before_closing_connection(monkeypatch):
     class Transport:
-        closed = False
+        finished = False
 
         def finish(self):
-            self.closed = True
+            self.finished = True
 
     class Connection:
         def __init__(self):
             self.pgconn = Transport()
-
-        @property
-        def closed(self):
-            return self.pgconn.closed
+            self.closed = False
+            self.operation_cancelled = False
 
         async def execute(self, statement, params=None):
             if statement == "SELECT slow":
                 try:
                     await asyncio.Event().wait()
                 except asyncio.CancelledError:
-                    while not self.pgconn.closed:
-                        await asyncio.sleep(0)
+                    self.operation_cancelled = True
                     raise
 
         async def close(self):
-            self.pgconn.finish()
+            assert self.operation_cancelled
+            self.closed = True
 
     async def scenario():
         connection = Connection()
@@ -272,9 +310,10 @@ def test_postgres_deadline_aborts_transport_before_driver_cancellation_finishes(
 
         started = asyncio.get_running_loop().time()
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(operation(), 0.02)
+            await operation()
         assert asyncio.get_running_loop().time() - started < 0.2
         assert connection.closed
+        assert not connection.pgconn.finished
 
     asyncio.run(scenario())
 

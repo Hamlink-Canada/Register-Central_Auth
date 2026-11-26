@@ -120,6 +120,7 @@ async def connection(state, timeout, *, health=False):
     deadline = loop.time() + timeout
     connection = None
     abort_handle = None
+    deadline_expired = False
     slots = state.health_slots if health else state.lookup_slots
     acquired = False
     try:
@@ -136,7 +137,10 @@ async def connection(state, timeout, *, health=False):
                 remaining,
             )
             await connection.execute("PRAGMA query_only=ON")
-            await connection.execute(f"PRAGMA busy_timeout={max(1, int(timeout * 1000))}")
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError()
+            await connection.execute(f"PRAGMA busy_timeout={max(1, int(remaining * 1000))}")
             await connection.set_progress_handler(lambda: int(loop.time() >= deadline), 100)
         else:
             connection = await asyncio.wait_for(
@@ -144,11 +148,15 @@ async def connection(state, timeout, *, health=False):
                 remaining,
             )
 
-            def abort_transport():
-                if connection is not None and not connection.closed:
-                    connection.pgconn.finish()
+            operation_task = asyncio.current_task()
 
-            abort_handle = loop.call_at(deadline, abort_transport)
+            def cancel_operation():
+                nonlocal deadline_expired
+                if operation_task is not None and not operation_task.done():
+                    deadline_expired = True
+                    operation_task.cancel()
+
+            abort_handle = loop.call_at(deadline, cancel_operation)
             remaining = deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError()
@@ -162,6 +170,8 @@ async def connection(state, timeout, *, health=False):
             # Never return a connection with an interrupted query to reuse.
             await connection.close()
             connection = None
+        if not state.sqlite and deadline_expired:
+            raise TimeoutError() from None
         raise
     except (psycopg.Error, aiosqlite.Error):
         if connection is not None:
