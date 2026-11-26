@@ -147,6 +147,9 @@ def test_postgres_connection_options_are_url_strings():
             assert state.url.drivername == "postgresql"
             assert state.url.query["connect_timeout"] == "1"
             assert all(isinstance(value, str) for value in state.url.query.values())
+            assert sqlalchemy._connection_kwargs(state.url)["options"] == (
+                "-c default_transaction_read_only=on"
+            )
         finally:
             await sqlalchemy.close(state=state, timeout=1)
 

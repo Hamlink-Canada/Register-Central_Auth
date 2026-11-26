@@ -139,7 +139,7 @@ def test_postgres_migration_readonly_and_query_timeout(postgres):
             started = time.monotonic()
             with pytest.raises(BackendUnavailable):
                 async with sqlalchemy.connection(state, 0.03) as connection:
-                    await connection.execute(text("SELECT pg_sleep(1)"))
+                    await connection.execute("SELECT pg_sleep(1)")
             assert time.monotonic() - started < 0.9
         finally:
             await sqlalchemy.close(state=state, timeout=1)

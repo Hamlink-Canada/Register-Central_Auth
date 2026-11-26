@@ -18,6 +18,18 @@ from rpt_central_auth.errors import BackendUnavailable
 API_VERSION = 2
 
 
+def _connection_kwargs(url):
+    params = {
+        "dbname": url.database,
+        "host": url.host,
+        "password": url.password,
+        "port": url.port,
+        "user": url.username,
+    }
+    params.update(url.query)
+    return {key: value for key, value in params.items() if value is not None}
+
+
 @dataclass(repr=False)
 class State:
     url: object = field(repr=False)
@@ -120,7 +132,7 @@ async def connection(state, timeout, *, health=False):
             await connection.set_progress_handler(lambda: int(loop.time() >= deadline), 100)
         else:
             connection = await asyncio.wait_for(
-                psycopg.AsyncConnection.connect(state.url.render_as_string(hide_password=False)),
+                psycopg.AsyncConnection.connect(**_connection_kwargs(state.url)),
                 remaining,
             )
             remaining = deadline - loop.time()
