@@ -71,34 +71,43 @@ def test_registrars_against_central(settings, certificates, tmp_path, backend):
     async def scenario():
         app = Application(config)
         port = await app.start(address="127.0.0.1:0")
-        rpc = {"target": f"localhost:{port}", "ca": str(certificates["ca"]), "token": TOKENS["a"]}
-        http_config, iax_config = http_settings(grpc=rpc), iax_settings(grpc=rpc)
-        http_provider, iax_provider = HTTPProvider(http_config), IAXProvider(iax_config)
-        http_publisher, iax_publisher = Publisher(), Publisher()
-        web = create_app(http_config, http_provider, http_publisher).test_client()
-        guard = AbuseGuard(iax_config)
-        protocol = RegistrationProtocol(iax_config, iax_provider, iax_publisher, guard)
-        server = Server(("127.0.0.1", 0), protocol, guard, 4)
-        thread = Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-
-        def iax_exchange():
-            def frame(payload, dest=0, stamp=0, sequence=0):
-                return pack("!HHIBBBB", 0x8001, dest, stamp, sequence, 0, 6, 13) + payload
-
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.settimeout(2)
-                sock.sendto(frame(ie(6, "1234")), server.server_address)
-                challenge = sock.recv(4096)
-                assert challenge[11] == 14
-                server_call = unpack("!H", challenge[:2])[0] & 0x7FFF
-                proof = md5(elements(challenge[12:])[15] + password.encode()).hexdigest()
-                sock.sendto(
-                    frame(ie(6, "1234") + ie(16, proof), server_call, 1, 1), server.server_address
-                )
-                assert sock.recv(4096)[11] == 15
-
+        http_provider = iax_provider = server = thread = None
         try:
+            rpc = {
+                "target": f"localhost:{port}",
+                "ca": str(certificates["ca"]),
+                "token": TOKENS["a"],
+            }
+            # The integration uses a capture publisher, so development mode avoids
+            # requiring real Kafka credentials in the registrar's production config.
+            http_config = http_settings(environment="development", grpc=rpc)
+            iax_config = iax_settings(grpc=rpc)
+            http_provider, iax_provider = HTTPProvider(http_config), IAXProvider(iax_config)
+            http_publisher, iax_publisher = Publisher(), Publisher()
+            web = create_app(http_config, http_provider, http_publisher).test_client()
+            guard = AbuseGuard(iax_config)
+            protocol = RegistrationProtocol(iax_config, iax_provider, iax_publisher, guard)
+            server = Server(("127.0.0.1", 0), protocol, guard, 4)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+
+            def iax_exchange():
+                def frame(payload, dest=0, stamp=0, sequence=0):
+                    return pack("!HHIBBBB", 0x8001, dest, stamp, sequence, 0, 6, 13) + payload
+
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.settimeout(2)
+                    sock.sendto(frame(ie(6, "1234")), server.server_address)
+                    challenge = sock.recv(4096)
+                    assert challenge[11] == 14
+                    server_call = unpack("!H", challenge[:2])[0] & 0x7FFF
+                    proof = md5(elements(challenge[12:])[15] + password.encode()).hexdigest()
+                    sock.sendto(
+                        frame(ie(6, "1234") + ie(16, proof), server_call, 1, 1),
+                        server.server_address,
+                    )
+                    assert sock.recv(4096)[11] == 15
+
             payload = {"data": {"nodes": {"1234": {"node": "1234", "passwd": password}}}}
             result = await asyncio.to_thread(web.post, "/", json=payload)
             assert result.status_code == 200 and "successfully registered" in result.json["data"][0]
@@ -108,11 +117,15 @@ def test_registrars_against_central(settings, certificates, tmp_path, backend):
             await asyncio.to_thread(iax_exchange)
             assert len(http_publisher.sent) == len(iax_publisher.sent) == 1
         finally:
-            await asyncio.to_thread(server.shutdown)
-            server.server_close()
-            thread.join(timeout=2)
-            http_provider.close()
-            iax_provider.close()
+            if server is not None:
+                await asyncio.to_thread(server.shutdown)
+                server.server_close()
+            if thread is not None:
+                thread.join(timeout=2)
+            if http_provider is not None:
+                http_provider.close()
+            if iax_provider is not None:
+                iax_provider.close()
             await app.stop()
 
     asyncio.run(scenario())
