@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import aiosqlite
 import psycopg
+from psycopg import errors as psycopg_errors
 from rpt_common.models.credentials import SUPPORTED_REVISIONS
 from sqlalchemy.engine import make_url
 
@@ -119,8 +120,6 @@ async def connection(state, timeout, *, health=False):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     connection = None
-    abort_handle = None
-    deadline_expired = False
     slots = state.health_slots if health else state.lookup_slots
     acquired = False
     try:
@@ -147,31 +146,44 @@ async def connection(state, timeout, *, health=False):
                 psycopg.AsyncConnection.connect(**_connection_kwargs(state.url)),
                 remaining,
             )
+            # Psycopg handles task cancellation by sending a server cancel and
+            # waiting for its response. Bound its socket wait directly instead,
+            # so a stalled response raises before the caller's task deadline.
+            driver_deadline = deadline - min(0.01, timeout * 0.1)
+            original_wait = connection.wait
 
-            operation_task = asyncio.current_task()
+            async def wait_until_deadline(gen, *args, **kwargs):
+                wait_budget = driver_deadline - loop.time()
+                if wait_budget <= 0:
+                    raise TimeoutError()
+                requested_timeout = kwargs.get("timeout")
+                kwargs["timeout"] = (
+                    wait_budget
+                    if requested_timeout is None
+                    else min(requested_timeout, wait_budget)
+                )
+                return await original_wait(gen, *args, **kwargs)
 
-            def cancel_operation():
-                nonlocal deadline_expired
-                if operation_task is not None and not operation_task.done():
-                    deadline_expired = True
-                    operation_task.cancel()
-
-            abort_handle = loop.call_at(deadline, cancel_operation)
-            remaining = deadline - loop.time()
+            connection.wait = wait_until_deadline
+            remaining = driver_deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError()
+            server_timeout = remaining + min(0.05, timeout * 0.1)
             await connection.execute(
                 "SELECT set_config('statement_timeout', %s, true)",
-                (str(max(1, int(remaining * 1000))),),
+                (str(max(1, int(server_timeout * 1000))),),
             )
         yield connection
+    except psycopg_errors._WaitTimeout:
+        if connection is not None:
+            await connection.close()
+            connection = None
+        raise TimeoutError() from None
     except asyncio.CancelledError:
         if connection is not None:
             # Never return a connection with an interrupted query to reuse.
             await connection.close()
             connection = None
-        if not state.sqlite and deadline_expired:
-            raise TimeoutError() from None
         raise
     except (psycopg.Error, aiosqlite.Error):
         if connection is not None:
@@ -179,8 +191,6 @@ async def connection(state, timeout, *, health=False):
             connection = None
         raise BackendUnavailable() from None
     finally:
-        if abort_handle is not None:
-            abort_handle.cancel()
         try:
             if connection is not None:
                 try:

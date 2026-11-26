@@ -208,6 +208,9 @@ def test_cancelled_postgres_operation_closes_connection(monkeypatch):
             if statement == "SELECT slow":
                 await asyncio.sleep(10)
 
+        async def wait(self, gen, *, timeout=None):
+            await asyncio.sleep(timeout)
+
         async def close(self):
             self.closed = True
 
@@ -268,29 +271,22 @@ def test_sqlite_busy_timeout_uses_remaining_deadline(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_postgres_deadline_cancels_owner_before_closing_connection(monkeypatch):
-    class Transport:
-        finished = False
-
-        def finish(self):
-            self.finished = True
-
+def test_postgres_deadline_uses_driver_wait_timeout(monkeypatch):
     class Connection:
         def __init__(self):
-            self.pgconn = Transport()
             self.closed = False
-            self.operation_cancelled = False
+            self.wait_timeout = None
 
         async def execute(self, statement, params=None):
             if statement == "SELECT slow":
-                try:
-                    await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    self.operation_cancelled = True
-                    raise
+                await self.wait(None)
+
+        async def wait(self, gen, *, timeout=None):
+            self.wait_timeout = timeout
+            await asyncio.sleep(timeout)
+            raise sqlalchemy.psycopg.errors._WaitTimeout("socket wait expired")
 
         async def close(self):
-            assert self.operation_cancelled
             self.closed = True
 
     async def scenario():
@@ -313,7 +309,7 @@ def test_postgres_deadline_cancels_owner_before_closing_connection(monkeypatch):
             await operation()
         assert asyncio.get_running_loop().time() - started < 0.2
         assert connection.closed
-        assert not connection.pgconn.finished
+        assert 0 < connection.wait_timeout < 0.02
 
     asyncio.run(scenario())
 
