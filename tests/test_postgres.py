@@ -1,5 +1,6 @@
 """Opt-in isolated Docker PostgreSQL checks: RPT_TEST_POSTGRES=1."""
 
+import asyncio
 import os
 import secrets
 import shutil
@@ -14,7 +15,6 @@ from psycopg import sql
 from rpt_common.migrate import upgrade
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import SQLAlchemyError
 
 from rpt_central_auth.backends import sqlalchemy
 from rpt_central_auth.errors import BackendUnavailable
@@ -123,19 +123,28 @@ def postgres(certificates, tmp_path_factory):
 
 
 def test_postgres_migration_readonly_and_query_timeout(postgres):
-    state = sqlalchemy.initialize(options={"url": postgres.reader, "ca": postgres.ca}, timeout=2)
-    try:
-        sqlalchemy.check(state=state, timeout=1)
-        assert sqlalchemy.lookup(1234, state=state, timeout=1) == "generated-test-password"
-        assert sqlalchemy.lookup(1235, state=state, timeout=1) is None
-        with pytest.raises(SQLAlchemyError), state.engine.begin() as connection:
-            connection.execute(text("UPDATE node_credentials SET enabled=false"))
-        started = time.monotonic()
-        with pytest.raises(BackendUnavailable), sqlalchemy.connection(state, 0.03) as connection:
-            connection.execute(text("SELECT pg_sleep(1)"))
-        assert time.monotonic() - started < 0.9
-    finally:
-        sqlalchemy.close(state=state, timeout=1)
+    async def scenario():
+        state = await sqlalchemy.initialize(
+            options={"url": postgres.reader, "ca": postgres.ca}, timeout=2
+        )
+        try:
+            await sqlalchemy.check(state=state, timeout=1)
+            assert (
+                await sqlalchemy.lookup(1234, state=state, timeout=1) == "generated-test-password"
+            )
+            assert await sqlalchemy.lookup(1235, state=state, timeout=1) is None
+            with pytest.raises(BackendUnavailable):
+                async with sqlalchemy.connection(state, 1) as connection:
+                    await connection.execute("UPDATE node_credentials SET enabled=false")
+            started = time.monotonic()
+            with pytest.raises(TimeoutError):
+                async with sqlalchemy.connection(state, 0.03) as connection:
+                    await connection.execute("SELECT pg_sleep(1)")
+            assert time.monotonic() - started < 0.2
+        finally:
+            await sqlalchemy.close(state=state, timeout=1)
+
+    asyncio.run(scenario())
 
 
 def test_postgres_verification_override_is_still_encrypted(postgres, certificates, monkeypatch):
@@ -144,30 +153,42 @@ def test_postgres_verification_override_is_still_encrypted(postgres, certificate
     hostile = postgres.reader.set(
         host="127.0.0.1", query={"sslmode": "verify-full", "sslrootcert": wrong_ca}
     )
-    verified = sqlalchemy.initialize(options={"url": hostile}, timeout=2)
-    try:
-        with pytest.raises(BackendUnavailable):
-            sqlalchemy.check(state=verified, timeout=2)
-    finally:
-        sqlalchemy.close(state=verified, timeout=1)
-    unchecked = sqlalchemy.initialize(options={"url": hostile, "verify_tls": False}, timeout=2)
-    ca_directory = Path(unchecked.ca_directory.name)
-    try:
-        sqlalchemy.check(state=unchecked, timeout=1)
-        with sqlalchemy.connection(unchecked, 1) as connection:
-            assert (
-                connection.scalar(text("SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()"))
-                is True
-            )
-    finally:
-        sqlalchemy.close(state=unchecked, timeout=1)
-    assert not ca_directory.exists()
+
+    async def scenario():
+        verified = await sqlalchemy.initialize(options={"url": hostile}, timeout=2)
+        try:
+            with pytest.raises(BackendUnavailable):
+                await sqlalchemy.check(state=verified, timeout=2)
+        finally:
+            await sqlalchemy.close(state=verified, timeout=1)
+        unchecked = await sqlalchemy.initialize(
+            options={"url": hostile, "verify_tls": False}, timeout=2
+        )
+        ca_directory = Path(unchecked.ca_directory.name)
+        try:
+            await sqlalchemy.check(state=unchecked, timeout=1)
+            async with sqlalchemy.connection(unchecked, 1) as connection:
+                cursor = await connection.execute(
+                    "SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
+                )
+                assert (await cursor.fetchone())[0] is True
+        finally:
+            await sqlalchemy.close(state=unchecked, timeout=1)
+        assert not ca_directory.exists()
+
+    asyncio.run(scenario())
 
 
 def test_postgres_readonly_even_with_writer_credentials(postgres):
-    state = sqlalchemy.initialize(options={"url": postgres.writer, "ca": postgres.ca}, timeout=2)
-    try:
-        with pytest.raises(SQLAlchemyError), state.engine.begin() as connection:
-            connection.execute(text("UPDATE node_credentials SET enabled=false"))
-    finally:
-        sqlalchemy.close(state=state, timeout=1)
+    async def scenario():
+        state = await sqlalchemy.initialize(
+            options={"url": postgres.writer, "ca": postgres.ca}, timeout=2
+        )
+        try:
+            with pytest.raises(BackendUnavailable):
+                async with sqlalchemy.connection(state, 1) as connection:
+                    await connection.execute("UPDATE node_credentials SET enabled=false")
+        finally:
+            await sqlalchemy.close(state=state, timeout=1)
+
+    asyncio.run(scenario())

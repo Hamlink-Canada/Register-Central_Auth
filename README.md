@@ -306,17 +306,17 @@ without passwords, tokens, node IDs, or peers. Do not expose metrics publicly.
 
 ## Custom modules
 
-Set `backend.module` to your installed dotted Python module path. API version 1
-requires synchronous `initialize`, `lookup`, `check`, and `close` functions:
+Set `backend.module` to your installed dotted Python module path. API version 2
+requires async `initialize`, `lookup`, `check`, and `close` coroutine functions:
 
 ```python
-API_VERSION = 1
+API_VERSION = 2
 
 
-def initialize(*, options, timeout): ...
-def lookup(node_id, *, state, timeout): ...
-def check(*, state, timeout): ...
-def close(*, state, timeout): ...
+async def initialize(*, options, timeout): ...
+async def lookup(node_id, *, state, timeout): ...
+async def check(*, state, timeout): ...
+async def close(*, state, timeout): ...
 ```
 
 Top-level option names are normalized to lowercase so TOML and nested environment
@@ -324,9 +324,11 @@ overrides behave alike; option values are unchanged. Initialization returns priv
 state shared by workers. Lookup returns a password or
 None for an unknown/disabled node. Availability failures raise
 `rpt_central_auth.errors.BackendUnavailable`; unexpected defects become INTERNAL.
-All functions must enforce their timeouts and support concurrent use. Check and
+All functions must honor cancellation and support concurrent use. The service
+cancels a call when its end-to-end deadline expires. Database backends must use
+an async driver and discard a connection if its operation is cancelled. Check and
 lookup can overlap; do not share a single database session between them. Cleanup
-runs only after outstanding calls finish. Extra helpers are allowed but never
+runs after outstanding calls finish. Extra helpers are allowed but never
 exposed automatically over gRPC. Install modules/dependencies in a derived image
 at build time; the service never downloads plugins at runtime.
 

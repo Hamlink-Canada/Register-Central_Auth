@@ -1,5 +1,6 @@
 """Validated startup snapshot. Restart to reload file changes."""
 
+import asyncio
 import csv
 import time
 from pathlib import Path
@@ -7,19 +8,31 @@ from types import MappingProxyType
 
 from rpt_common.models.credentials import valid_password
 
-API_VERSION = 1
+API_VERSION = 2
 
 
-def initialize(*, options, timeout):
+async def initialize(*, options, timeout):
     deadline = time.monotonic() + timeout
     records = {}
     maximum = options.get("max_entries", 100000)
     if type(maximum) is not int or maximum <= 0:
         raise ValueError("invalid credential snapshot capacity")
-    if not Path(options["file"]).is_file():
-        raise ValueError("credential CSV must be a regular file")
-    with Path(options["file"]).open(newline="", encoding="utf-8") as stream:
-        reader = csv.DictReader(stream)
+
+    def read_records():
+        path = Path(options["file"])
+        if not path.is_file():
+            raise ValueError("credential CSV must be a regular file")
+        with path.open(newline="", encoding="utf-8") as stream:
+            return _read(stream, maximum, deadline)
+
+    records = await asyncio.to_thread(read_records)
+    return MappingProxyType(records)
+
+
+def _read(stream, maximum, deadline):
+    records = {}
+    try:
+        reader = csv.DictReader(stream, strict=True)
         if reader.fieldnames != ["node_id", "password"]:
             raise ValueError("credential CSV requires node_id,password header")
         for row in reader:
@@ -38,17 +51,19 @@ def initialize(*, options, timeout):
             if len(records) >= maximum:
                 raise ValueError("credential snapshot capacity exceeded")
             records[node] = row["password"]
-    return MappingProxyType(records)
+    except csv.Error as error:
+        raise ValueError("invalid credential CSV") from error
+    return records
 
 
-def lookup(node_id, *, state, timeout):
+async def lookup(node_id, *, state, timeout):
     return state.get(node_id)
 
 
-def check(*, state, timeout):
+async def check(*, state, timeout):
     # Availability of the validated in-memory snapshot does not depend on the source file.
     pass
 
 
-def close(*, state, timeout):
+async def close(*, state, timeout):
     pass

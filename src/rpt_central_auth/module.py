@@ -1,55 +1,42 @@
-"""Versioned module loading and work slots retained until physical completion."""
+"""Versioned async backend loading with bounded in-flight work."""
 
 import asyncio
 import importlib
 import inspect
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
 from rpt_common.models.credentials import valid_password
 
 from rpt_central_auth.errors import CapacityExceeded, InvalidCredential
 
 
-class BoundedExecutor:
+class AsyncSlots:
+    """Bound concurrent coroutine calls while preserving cancellation semantics."""
+
     def __init__(self, workers):
-        self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="credential-backend")
-        self.slots = threading.BoundedSemaphore(workers)
-        self.pending = set()
-        self.lock = threading.Lock()
+        self.semaphore = asyncio.Semaphore(workers)
+        self.active = 0
         self.closed = False
 
     async def run(self, function, *args, timeout, **kwargs):
-        with self.lock:
-            if self.closed or not self.slots.acquire(blocking=False):
-                raise CapacityExceeded()
-            try:
-                future = self.pool.submit(function, *args, timeout=timeout, **kwargs)
-            except BaseException:
-                self.slots.release()
-                raise
-            self.pending.add(future)
-
-        def finished(completed):
-            with self.lock:
-                self.pending.discard(completed)
-            self.slots.release()
-
-        future.add_done_callback(finished)
-        wrapped = asyncio.wrap_future(future)
-        # Consume late failures after a caller's timeout without logging exception text.
-        wrapped.add_done_callback(lambda result: None if result.cancelled() else result.exception())
-        return await asyncio.wait_for(asyncio.shield(wrapped), timeout)
-
-    @property
-    def active(self):
-        with self.lock:
-            return len(self.pending)
+        deadline = asyncio.get_running_loop().time() + timeout
+        if self.closed:
+            raise CapacityExceeded()
+        try:
+            await asyncio.wait_for(self.semaphore.acquire(), timeout)
+        except TimeoutError:
+            raise CapacityExceeded() from None
+        self.active += 1
+        try:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError()
+            return await asyncio.wait_for(function(*args, timeout=remaining, **kwargs), remaining)
+        finally:
+            self.active -= 1
+            self.semaphore.release()
 
     def shutdown(self):
-        with self.lock:
-            self.closed = True
-        self.pool.shutdown(wait=False, cancel_futures=True)
+        self.closed = True
 
 
 class Backend:
@@ -57,7 +44,7 @@ class Backend:
         self.module = importlib.import_module(module)
         if (
             type(getattr(self.module, "API_VERSION", None)) is not int
-            or self.module.API_VERSION != 1
+            or self.module.API_VERSION != 2
         ):
             raise ValueError("unsupported backend module API")
         calls = {
@@ -68,24 +55,25 @@ class Backend:
         }
         for name, (args, kwargs) in calls.items():
             function = getattr(self.module, name, None)
-            if not callable(function) or inspect.iscoroutinefunction(function):
-                raise ValueError("backend functions must be synchronous")
+            if (
+                not callable(function)
+                or not inspect.iscoroutinefunction(function)
+                or inspect.isasyncgenfunction(function)
+            ):
+                raise ValueError("backend functions must be async coroutines")
             inspect.signature(function).bind(*args, **kwargs)
         self.options = options
-        self.lookups = BoundedExecutor(workers)
-        self.control = BoundedExecutor(1)
+        self.lookups = AsyncSlots(workers)
+        self.control = AsyncSlots(1)
         self.state = None
         self.initialized = False
 
     async def start(self, timeout):
         deadline = asyncio.get_running_loop().time() + timeout
 
-        def initialize_state(*, timeout):
-            # Retain ownership even if the caller times out before the module returns.
-            state = self.module.initialize(options=self.options, timeout=timeout)
-            self.state = state
+        async def initialize_state(*, timeout):
+            self.state = await self.module.initialize(options=self.options, timeout=timeout)
             self.initialized = True
-            return state
 
         await self.control.run(initialize_state, timeout=timeout)
         remaining = deadline - asyncio.get_running_loop().time()
@@ -111,7 +99,7 @@ class Backend:
                 self.lookups.shutdown()
                 self.control.shutdown()
                 return False
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.01)
         clean = True
         try:
             if self.initialized:

@@ -23,7 +23,9 @@ jobs:
           path: service
           persist-credentials: false
       - id: dependency
-        run: echo "ref=$(python service/scripts/dependency.py rpt-protobuf)" >> "$GITHUB_OUTPUT"
+        run: |
+          ref="$(python service/scripts/dependency.py rpt-protobuf)" || exit 1
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Hamlink-Canada/rpt_protobuf
