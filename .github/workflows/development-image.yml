@@ -1,0 +1,94 @@
+name: development image
+
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: development-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: service
+          persist-credentials: false
+      - id: dependency
+        run: echo "ref=$(python service/scripts/dependency.py rpt-protobuf)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/rpt_protobuf
+          ref: ${{ steps.dependency.outputs.ref }}
+          path: rpt_protobuf
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Hamlink-Canada/pyCommon
+          ref: main
+          path: pyCommon
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: tags
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          branch_slug=$(printf '%s' "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[.-]+//; s/[.-]+$//' | cut -c1-60)
+          branch_slug=${branch_slug:-branch}
+          branch_hash=$(printf '%s' "$BRANCH_NAME" | sha256sum | cut -c1-12)
+          branch_tag="dev-$branch_slug"
+          legacy_branch_tag="dev-$branch_slug-$branch_hash"
+          image="ghcr.io/hamlink-canada/register-central-auth"
+          {
+            echo 'tags<<EOF'
+            echo "$image:$branch_tag"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+          echo "branch_tag=$branch_tag" >> "$GITHUB_OUTPUT"
+          echo "legacy_branch_tag=$legacy_branch_tag" >> "$GITHUB_OUTPUT"
+      - name: Build and push multi-architecture image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./service
+          build-contexts: |
+            rpt_protobuf=./rpt_protobuf
+            pycommon=./pyCommon
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: VCS_REF=${{ github.sha }}
+          provenance: true
+      - name: Clean up legacy image versions for this branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_TAG: ${{ steps.tags.outputs.branch_tag }}
+          LEGACY_BRANCH_TAG: ${{ steps.tags.outputs.legacy_branch_tag }}
+          PACKAGE_NAME: register-central-auth
+        run: |
+          version_ids=$(gh api --paginate --jq '
+            .[]
+            | select(any(.metadata.container.tags[]?; . == env.LEGACY_BRANCH_TAG or startswith(env.LEGACY_BRANCH_TAG + "-")))
+            | select(all(.metadata.container.tags[]?; . != env.BRANCH_TAG))
+            | .id
+          ' "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions?per_page=100")
+          if [ -z "$version_ids" ]; then
+            echo "No legacy image versions found for $BRANCH_TAG"
+            exit 0
+          fi
+          while IFS= read -r version_id; do
+            [ -n "$version_id" ] || continue
+            gh api --method DELETE "/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions/$version_id"
+          done <<< "$version_ids"

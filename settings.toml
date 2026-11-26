@@ -1,0 +1,2 @@
+# Operator configuration and secrets are mounted at /config.
+# Set RPT_CONFIG_DIR=/config. No credentials ship in the image.
